@@ -44,27 +44,45 @@ st.markdown("""
 
 def get_symbol_from_name(query):
     query = query.strip()
-    if query.isupper() and len(query) <= 5 and " " not in query: return query
+    # Detect if user is searching for Indian stock by name (add .NS if needed later)
+    # Simple ticker check
+    if query.isupper() and len(query) <= 6 and " " not in query: return query
+    
     try:
+        # Search Yahoo Finance
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         data = response.json()
-        if 'quotes' in data and len(data['quotes']) > 0: return data['quotes'][0]['symbol']
+        if 'quotes' in data and len(data['quotes']) > 0:
+            return data['quotes'][0]['symbol']
     except: pass
     return query.upper()
 
+def get_currency_symbol(currency_code):
+    """Returns the correct symbol for the currency."""
+    if currency_code == 'INR': return '₹'
+    if currency_code == 'USD': return '$'
+    if currency_code == 'EUR': return '€'
+    if currency_code == 'GBP': return '£'
+    return f"{currency_code} "
+
 def get_financial_data(ticker):
     stock = yf.Ticker(ticker)
-    return stock, stock.info, stock.financials, stock.balance_sheet
+    return stock, stock.info, stock.financials, stock.balance_sheet, stock.cashflow
 
 def run_pro_analysis(symbol):
     results = []
     score = 0
     
-    stock, info, financials, balance_sheet = get_financial_data(symbol)
+    # Fetch all data objects
+    stock, info, financials, balance_sheet, cashflow = get_financial_data(symbol)
+    
+    # Metadata
     company_name = info.get('longName', symbol)
     current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+    currency = info.get('currency', 'USD')
+    curr_sym = get_currency_symbol(currency)
     
     # --- 1. REVENUE GROWTH (CAGR) ---
     try:
@@ -73,83 +91,96 @@ def run_pro_analysis(symbol):
             cagr = (revs.iloc[-1] / revs.iloc[0]) ** (1 / (len(revs) - 1)) - 1
             val_str = f"{cagr:.2%}"
             if cagr >= 0.10:
-                results.append({"step": "Rev Growth > 10%", "status": "PASS", "val": val_str, "english": "Company sales are growing fast (+10%/yr)."})
+                results.append({"step": "Rev Growth > 10%", "status": "PASS", "val": val_str, "english": "Sales growing fast (+10%/yr)."})
                 score += 1
             else:
-                results.append({"step": "Rev Growth > 10%", "status": "FAIL", "val": val_str, "english": "Sales are growing too slowly."})
-        else: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "Not enough data to tell."})
+                results.append({"step": "Rev Growth > 10%", "status": "FAIL", "val": val_str, "english": "Sales growing too slowly."})
+        else: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "Insufficient data."})
     except: results.append({"step": "Rev Growth", "status": "FAIL", "val": "Error", "english": "Data unavailable."})
 
     # --- 2. P/E RATIO ---
     pe = info.get('trailingPE')
     if pe and pe < 30: 
-        results.append({"step": "P/E Ratio < 30", "status": "PASS", "val": f"{pe:.2f}", "english": "Stock price is fair compared to its profit."})
+        results.append({"step": "P/E Ratio < 30", "status": "PASS", "val": f"{pe:.2f}", "english": "Stock price is fair vs profit."})
         score += 1
     else:
-        results.append({"step": "P/E Ratio < 30", "status": "FAIL", "val": f"{pe if pe else 'N/A'}", "english": "Stock might be too expensive right now."})
+        results.append({"step": "P/E Ratio < 30", "status": "FAIL", "val": f"{pe if pe else 'N/A'}", "english": "Stock might be expensive."})
 
     # --- 3. ROE (Return on Equity) ---
     roe = info.get('returnOnEquity')
     if roe and roe > 0.10: 
-        results.append({"step": "ROE > 10%", "status": "PASS", "val": f"{roe:.2%}", "english": "Management is very efficient at using your money."})
+        results.append({"step": "ROE > 10%", "status": "PASS", "val": f"{roe:.2%}", "english": "High efficiency."})
         score += 1
     else:
-        results.append({"step": "ROE > 10%", "status": "FAIL", "val": f"{roe:.2%}" if roe else "N/A", "english": "Management isn't generating enough profit from investments."})
+        results.append({"step": "ROE > 10%", "status": "FAIL", "val": f"{roe:.2%}" if roe else "N/A", "english": "Low returns on capital."})
 
     # --- 4. DEBT TO EQUITY (Solvency) ---
     de = info.get('debtToEquity') 
     if de is not None:
         ratio = de / 100
         if ratio < 1.0: 
-            results.append({"step": "Debt/Equity < 1.0", "status": "PASS", "val": f"{ratio:.2f}", "english": "Company has low debt. Very safe."})
+            results.append({"step": "Debt/Equity < 1.0", "status": "PASS", "val": f"{ratio:.2f}", "english": "Low debt. Safe."})
             score += 1
         else:
-            results.append({"step": "Debt/Equity < 1.0", "status": "FAIL", "val": f"{ratio:.2f}", "english": "Company has high debt. Risky."})
+            results.append({"step": "Debt/Equity < 1.0", "status": "FAIL", "val": f"{ratio:.2f}", "english": "High debt. Risky."})
     else: results.append({"step": "Debt/Equity", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
 
-    # --- 5. FREE CASH FLOW YIELD ---
+    # --- 5. FREE CASH FLOW YIELD (Enhanced Logic) ---
     fcf = info.get('freeCashflow')
     mcap = info.get('marketCap')
+    
+    # PLAN B: If FCF is missing in info, calculate from Cashflow Statement
+    if fcf is None and not cashflow.empty:
+        try:
+            # Try finding 'Free Cash Flow' row directly
+            if 'Free Cash Flow' in cashflow.index:
+                fcf = cashflow.loc['Free Cash Flow'].iloc[0]
+            # Try calculating: Operating Cash Flow + Capital Expenditure (CapEx is negative)
+            elif 'Operating Cash Flow' in cashflow.index and 'Capital Expenditure' in cashflow.index:
+                fcf = cashflow.loc['Operating Cash Flow'].iloc[0] + cashflow.loc['Capital Expenditure'].iloc[0] # CapEx is usually negative
+        except:
+            pass
+
     if fcf and mcap:
         fcf_yield = fcf / mcap
         if fcf_yield > 0.03: 
-            results.append({"step": "FCF Yield > 3%", "status": "PASS", "val": f"{fcf_yield:.2%}", "english": "Company generates lots of real cash (not just paper profit)."})
+            results.append({"step": "FCF Yield > 3%", "status": "PASS", "val": f"{fcf_yield:.2%}", "english": "Generating strong cash."})
             score += 1
         else:
-            results.append({"step": "FCF Yield > 3%", "status": "FAIL", "val": f"{fcf_yield:.2%}", "english": "Company is not generating enough liquid cash."})
-    else: results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
+            results.append({"step": "FCF Yield > 3%", "status": "FAIL", "val": f"{fcf_yield:.2%}", "english": "Low cash generation."})
+    else: 
+        results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
 
-    # --- 6. FUTURE UPSIDE (Proxy for Order Book/Future Orders) ---
-    # We use Analyst Target Price vs Current Price to see if "Future Orders" are expected to drive value
+    # --- 6. FUTURE UPSIDE (Analyst Target) ---
     target_price = info.get('targetMeanPrice')
     if target_price and current_price:
         upside = (target_price - current_price) / current_price
-        if upside > 0.10: # Analysts expect 10% growth
-            results.append({"step": "Analyst Upside > 10%", "status": "PASS", "val": f"+{upside:.1%}", "english": f"Experts predict price will rise to ${target_price}."})
+        target_display = f"{curr_sym}{target_price:,.2f}"
+        if upside > 0.10: 
+            results.append({"step": "Analyst Upside > 10%", "status": "PASS", "val": f"+{upside:.1%}", "english": f"Experts target: {target_display}"})
             score += 1
         else:
-            results.append({"step": "Analyst Upside > 10%", "status": "FAIL", "val": f"{upside:.1%}", "english": f"Experts think price might stay flat or drop (Target: ${target_price})."})
+            results.append({"step": "Analyst Upside > 10%", "status": "FAIL", "val": f"{upside:.1%}", "english": f"Target too low ({target_display})"})
     else:
-        results.append({"step": "Future Upside", "status": "FAIL", "val": "N/A", "english": "No analyst predictions available."})
-
+        results.append({"step": "Future Upside", "status": "FAIL", "val": "N/A", "english": "No analyst data."})
 
     # --- 7. PEG RATIO ---
     peg = info.get('pegRatio')
     if peg and peg < 2.0:
-        results.append({"step": "PEG Ratio < 2", "status": "PASS", "val": f"{peg:.2f}", "english": "Price is cheap considering how fast it's growing."})
+        results.append({"step": "PEG Ratio < 2", "status": "PASS", "val": f"{peg:.2f}", "english": "Undervalued for growth."})
         score += 1
     else:
-        results.append({"step": "PEG Ratio < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Price is too high for the current growth rate."})
+        results.append({"step": "PEG Ratio < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Overvalued for growth."})
 
     # --- 8. CURRENT RATIO ---
     curr = info.get('currentRatio')
     if curr and curr > 1.5:
-        results.append({"step": "Current Ratio > 1.5", "status": "PASS", "val": f"{curr:.2f}", "english": "Can easily pay off short-term bills."})
+        results.append({"step": "Current Ratio > 1.5", "status": "PASS", "val": f"{curr:.2f}", "english": "Can pay short-term bills."})
         score += 1
     else:
-        results.append({"step": "Current Ratio > 1.5", "status": "FAIL", "val": f"{curr if curr else 'N/A'}", "english": "Might struggle to pay bills if business slows down."})
+        results.append({"step": "Current Ratio > 1.5", "status": "FAIL", "val": f"{curr if curr else 'N/A'}", "english": "Liquidity tight."})
 
-    return score, results, company_name, current_price
+    return score, results, company_name, current_price, curr_sym
 
 # --- MAIN APP LOGIC ---
 
@@ -159,12 +190,12 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🏛️ ynotAI Stock Analyzer")
+        st.title("🏛️ Wall St. Login")
         with st.form("login"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
             if st.form_submit_button("Access Terminal"):
-                if user == "ynot" and pw == "Str0ng@Pulse#884":
+                if user == "ynot_admin" and pw == "ynot_secure_pass":
                     st.session_state.authenticated = True
                     st.rerun()
                 else: st.error("Access Denied")
@@ -186,7 +217,7 @@ def main_app():
 
     col1, col2 = st.columns([3, 1])
     with col1:
-        query = st.text_input("Search Ticker or Company", placeholder="e.g. MSFT, JP Morgan, Pfizer").strip()
+        query = st.text_input("Search Ticker or Company", placeholder="e.g. Reliance, Tata Motors, Apple").strip()
     with col2:
         st.write(""); st.write("")
         btn = st.button("Analyze", type="primary", use_container_width=True)
@@ -195,13 +226,13 @@ def main_app():
         with st.spinner(f"Fetching institutional data for '{query}'..."):
             symbol = get_symbol_from_name(query)
             try:
-                score, trace, name, price = run_pro_analysis(symbol)
+                score, trace, name, price, sym = run_pro_analysis(symbol)
                 
                 st.markdown("---")
                 
-                # HEADER WITH PRICE
+                # HEADER WITH DYNAMIC CURRENCY
                 st.markdown(f"### 🏢 {name} ({symbol})")
-                st.markdown(f'<div class="price-tag">Current Price: ${price:,.2f}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="price-tag">Current Price: {sym}{price:,.2f}</div>', unsafe_allow_html=True)
                 
                 # SCORECARD LOGIC
                 if score >= 7:
@@ -247,7 +278,7 @@ def main_app():
                     else: c2.markdown(html, unsafe_allow_html=True)
             except Exception as e:
                  st.error(f"Error analyzing {symbol}. Please ensure the ticker is correct.")
-                 st.write(e)
+                 st.write(f"Debug Info: {e}")
 
     footer()
 
