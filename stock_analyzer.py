@@ -2,9 +2,10 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
+from textblob import TextBlob  # The AI Library
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="YnotAI Pro Analyzer", page_icon="🏛️", layout="wide")
+st.set_page_config(page_title="YnotAI Pro Analyzer", page_icon="🧠", layout="wide")
 
 # --- CUSTOM CSS ---
 st.markdown("""
@@ -17,7 +18,21 @@ st.markdown("""
     .score-med { background: linear-gradient(135deg, #d97706, #f59e0b); } 
     .score-low { background: linear-gradient(135deg, #dc2626, #ef4444); }
     
-    /* CARDS */
+    /* AI CARD STYLING */
+    .ai-card {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6); /* Purple Gradient */
+        color: white !important;
+        padding: 20px;
+        border-radius: 15px;
+        margin-bottom: 25px;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        border: 1px solid #7c3aed;
+    }
+    .ai-card h3 { color: white !important; margin: 0; }
+    .ai-card p { color: #e0e7ff !important; margin: 5px 0 0 0; font-size: 1.1rem; }
+
+    /* METRIC CARDS */
     .metric-card {
         background-color: white;
         color: black !important;
@@ -44,12 +59,8 @@ st.markdown("""
 
 def get_symbol_from_name(query):
     query = query.strip()
-    # Detect if user is searching for Indian stock by name (add .NS if needed later)
-    # Simple ticker check
     if query.isupper() and len(query) <= 6 and " " not in query: return query
-    
     try:
-        # Search Yahoo Finance
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
@@ -60,7 +71,6 @@ def get_symbol_from_name(query):
     return query.upper()
 
 def get_currency_symbol(currency_code):
-    """Returns the correct symbol for the currency."""
     if currency_code == 'INR': return '₹'
     if currency_code == 'USD': return '$'
     if currency_code == 'EUR': return '€'
@@ -71,11 +81,47 @@ def get_financial_data(ticker):
     stock = yf.Ticker(ticker)
     return stock, stock.info, stock.financials, stock.balance_sheet, stock.cashflow
 
+# --- AI LAYER: NEWS SENTIMENT ---
+def analyze_ai_sentiment(stock):
+    """
+    Fetches latest news and runs Sentiment Analysis using TextBlob.
+    Returns: Label, Color, Explanation
+    """
+    try:
+        news = stock.news
+        if not news:
+            return "Neutral / No News", "#9ca3af", "No recent news headlines found to analyze."
+        
+        score_total = 0
+        count = 0
+        
+        # Analyze up to 7 recent headlines
+        for item in news[:7]:
+            title = item.get('title', '')
+            if title:
+                analysis = TextBlob(title)
+                score_total += analysis.sentiment.polarity
+                count += 1
+        
+        if count == 0: return "Neutral", "#9ca3af", "Could not analyze news text."
+        
+        avg_score = score_total / count
+        
+        # Determine Verdict
+        if avg_score > 0.1:
+            return "Positive (Bullish) 🐂", "High", "News headlines are optimistic and positive."
+        elif avg_score < -0.1:
+            return "Negative (Bearish) 🐻", "Low", "News headlines contain negative sentiment."
+        else:
+            return "Neutral 😐", "Med", "News is mixed or strictly factual."
+            
+    except Exception as e:
+        return "AI Error", "Med", "Could not run AI analysis."
+
 def run_pro_analysis(symbol):
     results = []
     score = 0
     
-    # Fetch all data objects
     stock, info, financials, balance_sheet, cashflow = get_financial_data(symbol)
     
     # Metadata
@@ -84,7 +130,10 @@ def run_pro_analysis(symbol):
     currency = info.get('currency', 'USD')
     curr_sym = get_currency_symbol(currency)
     
-    # --- 1. REVENUE GROWTH (CAGR) ---
+    # --- AI ANALYSIS ---
+    ai_verdict, ai_strength, ai_msg = analyze_ai_sentiment(stock)
+    
+    # --- 1. REVENUE GROWTH ---
     try:
         revs = financials.loc['Total Revenue'].iloc[::-1]
         if len(revs) > 1:
@@ -106,7 +155,7 @@ def run_pro_analysis(symbol):
     else:
         results.append({"step": "P/E Ratio < 30", "status": "FAIL", "val": f"{pe if pe else 'N/A'}", "english": "Stock might be expensive."})
 
-    # --- 3. ROE (Return on Equity) ---
+    # --- 3. ROE ---
     roe = info.get('returnOnEquity')
     if roe and roe > 0.10: 
         results.append({"step": "ROE > 10%", "status": "PASS", "val": f"{roe:.2%}", "english": "High efficiency."})
@@ -114,7 +163,7 @@ def run_pro_analysis(symbol):
     else:
         results.append({"step": "ROE > 10%", "status": "FAIL", "val": f"{roe:.2%}" if roe else "N/A", "english": "Low returns on capital."})
 
-    # --- 4. DEBT TO EQUITY (Solvency) ---
+    # --- 4. DEBT TO EQUITY ---
     de = info.get('debtToEquity') 
     if de is not None:
         ratio = de / 100
@@ -125,22 +174,15 @@ def run_pro_analysis(symbol):
             results.append({"step": "Debt/Equity < 1.0", "status": "FAIL", "val": f"{ratio:.2f}", "english": "High debt. Risky."})
     else: results.append({"step": "Debt/Equity", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
 
-    # --- 5. FREE CASH FLOW YIELD (Enhanced Logic) ---
+    # --- 5. FCF YIELD ---
     fcf = info.get('freeCashflow')
     mcap = info.get('marketCap')
-    
-    # PLAN B: If FCF is missing in info, calculate from Cashflow Statement
     if fcf is None and not cashflow.empty:
         try:
-            # Try finding 'Free Cash Flow' row directly
-            if 'Free Cash Flow' in cashflow.index:
-                fcf = cashflow.loc['Free Cash Flow'].iloc[0]
-            # Try calculating: Operating Cash Flow + Capital Expenditure (CapEx is negative)
+            if 'Free Cash Flow' in cashflow.index: fcf = cashflow.loc['Free Cash Flow'].iloc[0]
             elif 'Operating Cash Flow' in cashflow.index and 'Capital Expenditure' in cashflow.index:
-                fcf = cashflow.loc['Operating Cash Flow'].iloc[0] + cashflow.loc['Capital Expenditure'].iloc[0] # CapEx is usually negative
-        except:
-            pass
-
+                fcf = cashflow.loc['Operating Cash Flow'].iloc[0] + cashflow.loc['Capital Expenditure'].iloc[0]
+        except: pass
     if fcf and mcap:
         fcf_yield = fcf / mcap
         if fcf_yield > 0.03: 
@@ -148,10 +190,9 @@ def run_pro_analysis(symbol):
             score += 1
         else:
             results.append({"step": "FCF Yield > 3%", "status": "FAIL", "val": f"{fcf_yield:.2%}", "english": "Low cash generation."})
-    else: 
-        results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
+    else: results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "Data Missing"})
 
-    # --- 6. FUTURE UPSIDE (Analyst Target) ---
+    # --- 6. FUTURE UPSIDE ---
     target_price = info.get('targetMeanPrice')
     if target_price and current_price:
         upside = (target_price - current_price) / current_price
@@ -161,26 +202,23 @@ def run_pro_analysis(symbol):
             score += 1
         else:
             results.append({"step": "Analyst Upside > 10%", "status": "FAIL", "val": f"{upside:.1%}", "english": f"Target too low ({target_display})"})
-    else:
-        results.append({"step": "Future Upside", "status": "FAIL", "val": "N/A", "english": "No analyst data."})
+    else: results.append({"step": "Future Upside", "status": "FAIL", "val": "N/A", "english": "No analyst data."})
 
     # --- 7. PEG RATIO ---
     peg = info.get('pegRatio')
     if peg and peg < 2.0:
         results.append({"step": "PEG Ratio < 2", "status": "PASS", "val": f"{peg:.2f}", "english": "Undervalued for growth."})
         score += 1
-    else:
-        results.append({"step": "PEG Ratio < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Overvalued for growth."})
+    else: results.append({"step": "PEG Ratio < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Overvalued for growth."})
 
     # --- 8. CURRENT RATIO ---
     curr = info.get('currentRatio')
     if curr and curr > 1.5:
         results.append({"step": "Current Ratio > 1.5", "status": "PASS", "val": f"{curr:.2f}", "english": "Can pay short-term bills."})
         score += 1
-    else:
-        results.append({"step": "Current Ratio > 1.5", "status": "FAIL", "val": f"{curr if curr else 'N/A'}", "english": "Liquidity tight."})
+    else: results.append({"step": "Current Ratio > 1.5", "status": "FAIL", "val": f"{curr if curr else 'N/A'}", "english": "Liquidity tight."})
 
-    return score, results, company_name, current_price, curr_sym
+    return score, results, company_name, current_price, curr_sym, ai_verdict, ai_msg
 
 # --- MAIN APP LOGIC ---
 
@@ -190,7 +228,7 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🏛️ Ynot AI Stock Analyzer Login")
+        st.title("🧠 YnotAI Login")
         with st.form("login"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
@@ -201,7 +239,7 @@ def login_screen():
                 else: st.error("Access Denied")
 
 def footer():
-    st.markdown('<div class="footer">© 2024 ynotAIbundle | Professional Edition</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2024 ynotAIbundle | Pro + AI Edition</div>', unsafe_allow_html=True)
 
 def main_app():
     with st.sidebar:
@@ -210,10 +248,10 @@ def main_app():
             st.session_state.authenticated = False 
             st.rerun()
         st.markdown("---")
-        st.info("**Analysis Checklist:**\n1. Revenue Growth\n2. P/E Ratio\n3. ROE\n4. Debt/Equity\n5. Free Cash Flow\n6. Future Upside\n7. PEG Ratio\n8. Current Ratio")
+        st.info("**Checklist:**\n1. Rev Growth\n2. P/E Ratio\n3. ROE\n4. Debt/Equity\n5. Free Cash Flow\n6. Future Upside\n7. PEG Ratio\n8. Current Ratio\n\n**+ AI Sentiment**")
 
-    st.markdown('<div class="main-header">YnotAI Professional Analyzer</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Institutional Grade Fundamental Analysis</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">YnotAI Professional</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Fundamental + AI Sentiment Analysis</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -223,22 +261,30 @@ def main_app():
         btn = st.button("Analyze", type="primary", use_container_width=True)
 
     if btn and query:
-        with st.spinner(f"Fetching institutional data for '{query}'..."):
+        with st.spinner(f"Running AI & Financial models for '{query}'..."):
             symbol = get_symbol_from_name(query)
             try:
-                score, trace, name, price, sym = run_pro_analysis(symbol)
+                score, trace, name, price, sym, ai_verdict, ai_msg = run_pro_analysis(symbol)
                 
                 st.markdown("---")
                 
-                # HEADER WITH DYNAMIC CURRENCY
+                # HEADER
                 st.markdown(f"### 🏢 {name} ({symbol})")
                 st.markdown(f'<div class="price-tag">Current Price: {sym}{price:,.2f}</div>', unsafe_allow_html=True)
                 
-                # SCORECARD LOGIC
+                # --- NEW AI CARD ---
+                st.markdown(f"""
+                    <div class="ai-card">
+                        <h3>🧠 AI Market Mood: {ai_verdict}</h3>
+                        <p>{ai_msg}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # SCORECARD
                 if score >= 7:
-                    st.balloons()
                     s_class = "score-high"
                     verdict = "STRONG BUY (Institutional Grade)"
+                    st.balloons()
                 elif score >= 5:
                     s_class = "score-med"
                     verdict = "HOLD / MODERATE BUY"
@@ -260,7 +306,6 @@ def main_app():
                 for i, item in enumerate(trace):
                     css = "card-pass" if item['status'] == "PASS" else "card-fail"
                     icon = "✅" if item['status'] == "PASS" else "⚠️"
-                    
                     html = f"""
                     <div class="metric-card {css}">
                         <div style="display:flex; justify-content:space-between;">
