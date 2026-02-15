@@ -1,7 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
+import requests
 
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="YnotAI Stock Analyzer", page_icon="📈", layout="centered")
@@ -21,7 +21,7 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
         margin-bottom: 20px;
-        color: white; /* Text color for the big score box */
+        color: white; 
     }
     .score-high { background-color: #059669; } /* Green */
     .score-med { background-color: #d97706; }  /* Orange */
@@ -29,8 +29,8 @@ st.markdown("""
     
     /* FIXED SECTION: FORCE BLACK TEXT ON CARDS */
     .metric-card {
-        background-color: #ffffff; /* White background */
-        color: #000000 !important; /* Force BLACK text */
+        background-color: #ffffff;
+        color: #000000 !important;
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 10px;
@@ -38,11 +38,11 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .metric-card strong {
-        color: #000000 !important; /* Force bold text black */
+        color: #000000 !important;
         font-size: 1.1em;
     }
     .metric-card small {
-        color: #555555 !important; /* Dark grey for descriptions */
+        color: #555555 !important;
     }
     
     .card-pass { border-left-color: #059669; }
@@ -65,53 +65,65 @@ st.markdown("""
 
 # --- HELPER FUNCTIONS ---
 
+def get_symbol_from_name(query):
+    """
+    Attempts to find a ticker symbol from a company name query.
+    Uses a standard lookup approach.
+    """
+    query = query.strip()
+    
+    # If it looks like a ticker (short, uppercase), return it directly
+    if query.isupper() and len(query) <= 5 and " " not in query:
+        return query
+    
+    try:
+        # Use Yahoo Finance auto-complete API to find the ticker
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        if 'quotes' in data and len(data['quotes']) > 0:
+            # Return the first matching symbol
+            return data['quotes'][0]['symbol']
+    except:
+        pass
+    
+    # Fallback: Return original query (assume user typed ticker)
+    return query.upper()
+
 def get_financial_data(ticker):
     """Fetches necessary data objects from yfinance."""
     stock = yf.Ticker(ticker)
     return stock, stock.info, stock.financials, stock.balance_sheet
 
 def calculate_cagr(financials):
-    """Calculates Revenue CAGR over available years."""
     try:
         if financials.empty or 'Total Revenue' not in financials.index:
             return None, "Data Missing"
-        
-        # Get revenue rows and reverse (oldest to newest)
         revenues = financials.loc['Total Revenue'].iloc[::-1]
         years = len(revenues)
-        if years < 2:
-            return None, "Insufficient History"
-            
+        if years < 2: return None, "Insufficient History"
         start_rev = revenues.iloc[0]
         end_rev = revenues.iloc[-1]
-        
-        # CAGR Formula: (End/Start)^(1/n) - 1
         cagr = (end_rev / start_rev) ** (1 / (years - 1)) - 1
         return cagr, f"{cagr:.2%}"
     except:
         return None, "Error"
 
 def calculate_avg_roe(stock):
-    """Calculates Average ROE based on available Net Income / Stockholder Equity."""
     try:
         fin = stock.financials
         bal = stock.balance_sheet
-        
         if not fin.empty and not bal.empty and 'Net Income' in fin.index and 'Stockholders Equity' in bal.index:
             net_income = fin.loc['Net Income']
             equity = bal.loc['Stockholders Equity']
-            
-            # Calculate ROE for each matching year
             roes = []
             for date in net_income.index:
                 if date in equity.index:
                     roes.append(net_income[date] / equity[date])
-            
-            if not roes:
-                return None
-            
-            avg_roe = sum(roes) / len(roes)
-            return avg_roe
+            if not roes: return None
+            return sum(roes) / len(roes)
         return None
     except:
         return None
@@ -119,11 +131,12 @@ def calculate_avg_roe(stock):
 def run_analysis(symbol):
     results = []
     score = 0
-    
-    # FETCH DATA
     stock, info, financials, balance_sheet = get_financial_data(symbol)
     
-    # 1. REVENUE GROWTH CHECK (> 10%)
+    # Get Company Name for display
+    company_name = info.get('longName', symbol)
+    
+    # 1. REVENUE GROWTH CHECK
     cagr, cagr_str = calculate_cagr(financials)
     if cagr is not None and cagr >= 0.10:
         results.append({"step": "Revenue Growth > 10%", "status": "PASS", "value": cagr_str, "msg": "High Growth 🚀"})
@@ -132,7 +145,7 @@ def run_analysis(symbol):
         val = cagr_str if cagr is not None else "N/A"
         results.append({"step": "Revenue Growth > 10%", "status": "FAIL", "value": val, "msg": "Growth too slow 🐢"})
 
-    # 2. P/E RATIO CHECK (< 25)
+    # 2. P/E RATIO CHECK
     pe = info.get('trailingPE')
     if pe is not None and pe < 25:
         results.append({"step": "P/E Ratio < 25", "status": "PASS", "value": f"{pe:.2f}", "msg": "Good Value 💰"})
@@ -141,7 +154,7 @@ def run_analysis(symbol):
         val = f"{pe:.2f}" if pe is not None else "N/A"
         results.append({"step": "P/E Ratio < 25", "status": "FAIL", "value": val, "msg": "Expensive 💸"})
 
-    # 3. PEG RATIO CHECK (< 2)
+    # 3. PEG RATIO CHECK
     peg = info.get('pegRatio')
     if peg is not None and peg < 2:
         results.append({"step": "PEG Ratio < 2", "status": "PASS", "value": f"{peg:.2f}", "msg": "Price justifies growth ✅"})
@@ -150,10 +163,9 @@ def run_analysis(symbol):
         val = f"{peg:.2f}" if peg is not None else "N/A"
         results.append({"step": "PEG Ratio < 2", "status": "FAIL", "value": val, "msg": "Price ahead of growth ❌"})
 
-    # 4. ROE CHECK (> 5%)
+    # 4. ROE CHECK
     avg_roe = calculate_avg_roe(stock)
-    if avg_roe is None: avg_roe = info.get('returnOnEquity') # Fallback to current ROE
-    
+    if avg_roe is None: avg_roe = info.get('returnOnEquity')
     if avg_roe is not None and avg_roe > 0.05:
         results.append({"step": "ROE > 5%", "status": "PASS", "value": f"{avg_roe:.2%}", "msg": "Efficient Profits 🏭"})
         score += 1
@@ -161,7 +173,7 @@ def run_analysis(symbol):
         val = f"{avg_roe:.2%}" if avg_roe is not None else "N/A"
         results.append({"step": "ROE > 5%", "status": "FAIL", "value": val, "msg": "Low Efficiency 📉"})
 
-    # 5. QUICK RATIO CHECK (> 1.5)
+    # 5. QUICK RATIO CHECK
     quick = info.get('quickRatio')
     if quick is not None and quick > 1.5:
         results.append({"step": "Quick Ratio > 1.5", "status": "PASS", "value": f"{quick:.2f}", "msg": "Safe Liquidity 🛡️"})
@@ -170,7 +182,7 @@ def run_analysis(symbol):
         val = f"{quick:.2f}" if quick is not None else "N/A"
         results.append({"step": "Quick Ratio > 1.5", "status": "FAIL", "value": val, "msg": "Debt Risk ⚠️"})
 
-    return score, results
+    return score, results, company_name
 
 # --- MAIN UI ---
 
@@ -181,19 +193,17 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🔐 Ynot Stock Anlayzer Login")
+        st.title("🔐 YnotAI Login")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Enter")
-            
             if submitted:
-                # --- YOUR DEDICATED CREDENTIALS ---
-                if username == "ynot" and password == "Str0ng@Pulse#884":
+                if username == "ynot_admin" and password == "ynot_secure_pass":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
-                    st.error("Access Denied. Incorrect credentials.")
+                    st.error("Access Denied.")
 
 def footer():
     st.markdown("""
@@ -203,7 +213,6 @@ def footer():
     """, unsafe_allow_html=True)
 
 def main_app():
-    # Sidebar
     with st.sidebar:
         st.write("Logged in as: **ynot_admin**")
         if st.button("Logout"):
@@ -217,23 +226,30 @@ def main_app():
         st.write("4. ROE > 5%")
         st.write("5. Quick Ratio > 1.5")
 
-    # Main Content
     st.markdown('<div class="main-header">YnotAI Stock Analyzer</div>', unsafe_allow_html=True)
     
     col1, col2 = st.columns([3, 1])
     with col1:
-        symbol = st.text_input("Enter Stock Ticker", placeholder="e.g. AAPL, NVDA, TSLA").upper()
+        # UPDATED: Placeholder text changed to encourage Names
+        search_query = st.text_input("Enter Company Name or Ticker", placeholder="e.g. Apple, Tesla, Reliance").strip()
     with col2:
         st.write("")
         st.write("")
         analyze_btn = st.button("Run Analysis", type="primary", use_container_width=True)
 
-    if analyze_btn and symbol:
+    if analyze_btn and search_query:
+        # STEP 1: RESOLVE NAME TO TICKER
+        with st.spinner(f"Searching for '{search_query}'..."):
+            symbol = get_symbol_from_name(search_query)
+        
+        # STEP 2: RUN ANALYSIS
         with st.spinner(f"Analyzing {symbol}..."):
             try:
-                score, trace = run_analysis(symbol)
+                score, trace, full_name = run_analysis(symbol)
                 
-                # Determine Color & Message
+                # Show resolved name
+                st.info(f"Analyzed: **{full_name} ({symbol})**")
+                
                 if score == 5:
                     res_class = "score-high"
                     verdict = "💎 PERFECT BUY"
@@ -245,9 +261,6 @@ def main_app():
                     res_class = "score-low"
                     verdict = "🛑 DO NOT INVEST"
 
-                st.markdown("---")
-                
-                # Display Scorecard
                 st.markdown(f"""
                     <div class="score-box {res_class}">
                         <h1>{score} / 5</h1>
@@ -255,14 +268,10 @@ def main_app():
                     </div>
                 """, unsafe_allow_html=True)
 
-                # Display Individual Steps
                 st.subheader("Detailed Breakdown")
-                
                 for item in trace:
-                    # CSS logic for individual cards
                     card_class = "card-pass" if item['status'] == "PASS" else "card-fail"
                     icon = "✅" if item['status'] == "PASS" else "❌"
-                    
                     st.markdown(f"""
                         <div class="metric-card {card_class}">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -278,12 +287,10 @@ def main_app():
                     """, unsafe_allow_html=True)
 
             except Exception as e:
-                st.error(f"Error analyzing {symbol}. Please check if the ticker is correct.")
-                st.write(f"Debug: {e}")
+                st.error(f"Could not find data for '{search_query}'. Try using the exact ticker symbol.")
                 
     footer()
 
-# --- APP FLOW CONTROL ---
 if st.session_state.authenticated:
     main_app()
 else:
