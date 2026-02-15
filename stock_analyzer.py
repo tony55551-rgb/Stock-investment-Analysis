@@ -8,7 +8,7 @@ from datetime import datetime
 import plotly.graph_objs as go
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="YnotAI Ultimate", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="YnotAI Wall St.", page_icon="🏛️", layout="wide")
 
 # --- CUSTOM CSS ---
 st.markdown("""
@@ -82,32 +82,20 @@ st.markdown("""
 # --- HELPER FUNCTIONS ---
 
 def get_symbol_from_name(query):
-    """
-    Smart Lookup: Prioritizes Indian stocks (.NS/.BO) if found.
-    """
     query = query.strip()
-    # If user typed a valid ticker directly (e.g. RELIANCE.NS), use it.
     if (query.isupper() and len(query) <= 12) or ".NS" in query.upper() or ".BO" in query.upper():
         return query.upper()
-    
     try:
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         data = response.json()
-        
         if 'quotes' in data and len(data['quotes']) > 0:
             quotes = data['quotes']
-            
-            # PRIORITY 1: Look for Indian Tickers (.NS or .BO)
             for q in quotes:
                 sym = q.get('symbol', '')
-                if sym.endswith('.NS') or sym.endswith('.BO'):
-                    return sym
-            
-            # PRIORITY 2: Return the first match (Default behavior for US stocks)
+                if sym.endswith('.NS') or sym.endswith('.BO'): return sym
             return quotes[0]['symbol']
-            
     except: pass
     return query.upper()
 
@@ -137,32 +125,26 @@ def analyze_ai_sentiment(stock):
                 count += 1
         if count == 0: return "Neutral", "#9ca3af", "Could not analyze news text."
         avg_score = score_total / count
-        if avg_score > 0.05: return "Positive (Bullish) 🐂", "High", "News headlines are generally optimistic."
-        elif avg_score < -0.05: return "Negative (Bearish) 🐻", "Low", "News headlines contain negative sentiment."
-        else: return "Neutral 😐", "Med", "News is mixed or factual."
-    except: return "AI Error", "Med", "Could not run AI analysis."
+        if avg_score > 0.05: return "Positive (Bullish) 🐂", "High", "News headlines are optimistic."
+        elif avg_score < -0.05: return "Negative (Bearish) 🐻", "Low", "News headlines are negative."
+        else: return "Neutral 😐", "Med", "News is mixed/factual."
+    except: return "AI Error", "Med", "AI analysis unavailable."
 
 def predict_future_price(ticker):
     try:
         df = yf.download(ticker, period="5y", progress=False)
         if df.empty or len(df) < 100: return None, 0, 0
-        
         df.reset_index(inplace=True)
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-            
         data = df[['Date', 'Close']].rename(columns={'Date': 'ds', 'Close': 'y'})
         data['ds'] = data['ds'].dt.tz_localize(None)
-
         m = Prophet(daily_seasonality=True)
         m.fit(data)
-
         future = m.make_future_dataframe(periods=365*5)
         forecast = m.predict(future)
-
         current_price = forecast['yhat'].iloc[-365*5] 
         future_price = forecast['yhat'].iloc[-1]      
         roi = ((future_price - current_price) / current_price) * 100
-        
         return forecast, roi, future_price
     except: return None, 0, 0
 
@@ -178,70 +160,94 @@ def run_pro_analysis(symbol):
     
     ai_verdict, ai_strength, ai_msg = analyze_ai_sentiment(stock)
     
+    # --- 12-POINT CHECKLIST ---
+    
     # 1. REV GROWTH
     try:
         revs = financials.loc['Total Revenue'].iloc[::-1]
         if len(revs) > 1:
             cagr = (revs.iloc[-1] / revs.iloc[0]) ** (1 / (len(revs) - 1)) - 1
             if cagr >= 0.10: 
-                results.append({"step": "Rev Growth > 10%", "status": "PASS", "val": f"{cagr:.2%}", "english": "Sales growing fast (+10%/yr)."})
-                score += 1
-            else: results.append({"step": "Rev Growth > 10%", "status": "FAIL", "val": f"{cagr:.2%}", "english": "Sales growing slowly."})
-        else: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "Data Unavailable"})
-    except: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "Data Unavailable"})
+                results.append({"step": "Rev Growth > 10%", "status": "PASS", "val": f"{cagr:.2%}", "english": "Sales growing fast."}); score += 1
+            else: results.append({"step": "Rev Growth > 10%", "status": "FAIL", "val": f"{cagr:.2%}", "english": "Sales slow."})
+        else: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "No Data"})
+    except: results.append({"step": "Rev Growth", "status": "FAIL", "val": "N/A", "english": "No Data"})
 
-    # 2. P/E
+    # 2. P/E (< 30)
     pe = info.get('trailingPE')
-    if pe and pe < 30: 
-        results.append({"step": "P/E < 30", "status": "PASS", "val": f"{pe:.2f}", "english": "Fair price vs profit."}); score += 1
-    else: results.append({"step": "P/E < 30", "status": "FAIL", "val": f"{pe if pe else 'N/A'}", "english": "Stock is expensive."})
+    if pe and pe < 30: results.append({"step": "P/E < 30", "status": "PASS", "val": f"{pe:.2f}", "english": "Fairly priced."}); score += 1
+    else: results.append({"step": "P/E < 30", "status": "FAIL", "val": f"{pe if pe else 'N/A'}", "english": "Expensive."})
 
-    # 3. ROE
+    # 3. ROE (> 10%)
     roe = info.get('returnOnEquity')
-    if roe and roe > 0.10: 
-        results.append({"step": "ROE > 10%", "status": "PASS", "val": f"{roe:.2%}", "english": "Highly efficient management."}); score += 1
-    else: results.append({"step": "ROE > 10%", "status": "FAIL", "val": f"{roe:.2%}" if roe else 'N/A', "english": "Low efficiency."})
+    if roe and roe > 0.10: results.append({"step": "ROE > 10%", "status": "PASS", "val": f"{roe:.2f}", "english": "High efficiency."}); score += 1
+    else: results.append({"step": "ROE > 10%", "status": "FAIL", "val": f"{roe if roe else 'N/A'}", "english": "Low efficiency."})
 
-    # 4. DEBT/EQUITY
+    # 4. DEBT/EQUITY (< 1.0)
     de = info.get('debtToEquity')
     if de is not None:
         ratio = de/100
-        if ratio < 1.0: results.append({"step": "Debt/Eq < 1.0", "status": "PASS", "val": f"{ratio:.2f}", "english": "Low debt (Safe)."}); score += 1
-        else: results.append({"step": "Debt/Eq < 1.0", "status": "FAIL", "val": f"{ratio:.2f}", "english": "High debt (Risky)."})
-    else: results.append({"step": "Debt/Eq", "status": "FAIL", "val": "N/A", "english": "Data Unavailable"})
+        if ratio < 1.0: results.append({"step": "Debt/Eq < 1.0", "status": "PASS", "val": f"{ratio:.2f}", "english": "Safe debt."}); score += 1
+        else: results.append({"step": "Debt/Eq < 1.0", "status": "FAIL", "val": f"{ratio:.2f}", "english": "High debt."})
+    else: results.append({"step": "Debt/Eq", "status": "FAIL", "val": "N/A", "english": "No Data"})
 
-    # 5. FCF
+    # 5. FCF YIELD (> 3%)
     fcf = info.get('freeCashflow')
     mcap = info.get('marketCap')
-    if fcf is None and not cashflow.empty: # Plan B
+    if fcf is None and not cashflow.empty:
         try:
              if 'Free Cash Flow' in cashflow.index: fcf = cashflow.loc['Free Cash Flow'].iloc[0]
              elif 'Operating Cash Flow' in cashflow.index and 'Capital Expenditure' in cashflow.index:
                  fcf = cashflow.loc['Operating Cash Flow'].iloc[0] + cashflow.loc['Capital Expenditure'].iloc[0]
         except: pass
-
     if fcf and mcap:
-        if (fcf/mcap) > 0.03: results.append({"step": "FCF Yield > 3%", "status": "PASS", "val": f"{fcf/mcap:.2%}", "english": "Generating real cash!"}); score += 1
+        if (fcf/mcap) > 0.03: results.append({"step": "FCF Yield > 3%", "status": "PASS", "val": f"{fcf/mcap:.2%}", "english": "Real cash machine!"}); score += 1
         else: results.append({"step": "FCF Yield > 3%", "status": "FAIL", "val": f"{fcf/mcap:.2%}", "english": "Low cash generation."})
-    else: results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "Data Unavailable"})
+    else: results.append({"step": "FCF Yield", "status": "FAIL", "val": "N/A", "english": "No Data"})
 
-    # 6. UPSIDE
+    # 6. UPSIDE (> 10%)
     tgt = info.get('targetMeanPrice')
     if tgt and current_price:
         up = (tgt - current_price)/current_price
-        if up > 0.10: results.append({"step": "Analyst Upside", "status": "PASS", "val": f"+{up:.1%}", "english": "Analysts predict price rise."}); score += 1
-        else: results.append({"step": "Analyst Upside", "status": "FAIL", "val": f"{up:.1%}", "english": "Analysts are cautious."})
+        if up > 0.10: results.append({"step": "Analyst Upside", "status": "PASS", "val": f"+{up:.1%}", "english": "Analysts bullish."}); score += 1
+        else: results.append({"step": "Analyst Upside", "status": "FAIL", "val": f"{up:.1%}", "english": "Analysts cautious."})
     else: results.append({"step": "Analyst Upside", "status": "FAIL", "val": "N/A", "english": "No Data"})
 
-    # 7. PEG
+    # 7. PEG RATIO (< 2.0)
     peg = info.get('pegRatio')
-    if peg and peg < 2.0: results.append({"step": "PEG < 2", "status": "PASS", "val": f"{peg:.2f}", "english": "Undervalued for its growth."}); score += 1
-    else: results.append({"step": "PEG < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Overvalued for its growth."})
+    if peg and peg < 2.0: results.append({"step": "PEG < 2", "status": "PASS", "val": f"{peg:.2f}", "english": "Undervalued growth."}); score += 1
+    else: results.append({"step": "PEG < 2", "status": "FAIL", "val": f"{peg if peg else 'N/A'}", "english": "Overvalued growth."})
 
-    # 8. CURRENT
+    # 8. CURRENT RATIO (> 1.5)
     curr = info.get('currentRatio')
-    if curr and curr > 1.5: results.append({"step": "Curr Ratio > 1.5", "status": "PASS", "val": f"{curr:.2f}", "english": "Good liquidity (Safe)."}); score += 1
+    if curr and curr > 1.5: results.append({"step": "Curr Ratio > 1.5", "status": "PASS", "val": f"{curr:.2f}", "english": "Safe liquidity."}); score += 1
     else: results.append({"step": "Curr Ratio > 1.5", "status": "FAIL", "val": f"{curr if curr else 'N/A'}", "english": "Tight liquidity."})
+
+    # --- NEW COMPLEX METRICS (9-12) ---
+
+    # 9. EV/EBITDA (< 20) - The "Banker's P/E"
+    ev = info.get('enterpriseValue')
+    ebitda = info.get('ebitda')
+    if ev and ebitda:
+        ev_ebitda = ev / ebitda
+        if ev_ebitda < 20: results.append({"step": "EV/EBITDA < 20", "status": "PASS", "val": f"{ev_ebitda:.2f}", "english": "Good enterprise value."}); score += 1
+        else: results.append({"step": "EV/EBITDA < 20", "status": "FAIL", "val": f"{ev_ebitda:.2f}", "english": "Enterprise overvalued."})
+    else: results.append({"step": "EV/EBITDA", "status": "FAIL", "val": "N/A", "english": "No Data"})
+
+    # 10. RETURN ON ASSETS (> 5%) - Efficiency Check
+    roa = info.get('returnOnAssets')
+    if roa and roa > 0.05: results.append({"step": "ROA > 5%", "status": "PASS", "val": f"{roa:.2%}", "english": "Assets used efficiently."}); score += 1
+    else: results.append({"step": "ROA > 5%", "status": "FAIL", "val": f"{roa if roa else 'N/A'}", "english": "Asset inefficient."})
+
+    # 11. GROSS MARGIN (> 40% or Growing) - Pricing Power
+    gm = info.get('grossMargins')
+    if gm and gm > 0.40: results.append({"step": "Gross Mrg > 40%", "status": "PASS", "val": f"{gm:.2%}", "english": "High pricing power."}); score += 1
+    else: results.append({"step": "Gross Mrg > 40%", "status": "FAIL", "val": f"{gm if gm else 'N/A'}", "english": "Low margins."})
+
+    # 12. INSTITUTIONAL OWNERSHIP (> 30%) - Smart Money Check
+    inst = info.get('heldPercentInstitutions')
+    if inst and inst > 0.30: results.append({"step": "Inst. Hold > 30%", "status": "PASS", "val": f"{inst:.2%}", "english": "Banks are buying."}); score += 1
+    else: results.append({"step": "Inst. Hold > 30%", "status": "FAIL", "val": f"{inst if inst else 'N/A'}", "english": "Mainly retail owned."})
 
     return score, results, company_name, current_price, curr_sym, ai_verdict, ai_msg
 
@@ -256,30 +262,30 @@ def login_screen():
         with st.form("login"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
-            if st.form_submit_button("Access Terminal"):
-                # CREDENTIALS HERE
+            if st.form_submit_button("Login Credentials"):
+                # CREDENTIALS
                 if user == "ynot" and pw == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else: st.error("Access Denied.")
 
 def footer():
-    st.markdown('<div class="footer">© 2026 ynotAIbundle | Ultimate Edition</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2026 ynotAIbundle | Wall St. Edition</div>', unsafe_allow_html=True)
 
 def main_app():
     with st.sidebar:
         st.write("User: **ynot_admin**")
         if st.button("Logout"): st.session_state.authenticated = False; st.rerun()
-        st.info("Features:\n1. 8-Point Check\n2. Sentiment AI\n3. 5-Year Forecast")
+        st.info("Features:\n1. 12-Point IB Check\n2. Sentiment AI\n3. 5-Year Forecast")
 
-    st.markdown('<div class="main-header">YnotAI Ultimate</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">YnotAI Wall St.</div>', unsafe_allow_html=True)
     
     col1, col2 = st.columns([3, 1])
-    with col1: query = st.text_input("Search Ticker/Company", placeholder="e.g. Reliance, Tata Motors, Apple").strip()
+    with col1: query = st.text_input("Search Ticker/Company", placeholder="e.g. Reliance, Nvidia").strip()
     with col2: st.write(""); st.write(""); btn = st.button("Analyze 🚀", type="primary", use_container_width=True)
 
     if btn and query:
-        with st.spinner(f"Running Analysis for '{query}'..."):
+        with st.spinner(f"Running Institutional Analysis for '{query}'..."):
             symbol = get_symbol_from_name(query)
             try:
                 score, trace, name, price, sym, ai_verdict, ai_msg = run_pro_analysis(symbol)
@@ -294,11 +300,18 @@ def main_app():
                     </div>
                 """, unsafe_allow_html=True)
 
-                s_class = "score-high" if score >= 7 else "score-med" if score >= 5 else "score-low"
-                verdict = "STRONG BUY" if score >= 7 else "HOLD" if score >= 5 else "AVOID"
-                st.markdown(f'<div class="score-box {s_class}"><h1>{score}/8</h1><h3>{verdict}</h3></div>', unsafe_allow_html=True)
+                # Adjusted Score thresholds for 12 parameters
+                if score >= 10:
+                    s_class = "score-high"; verdict = "STRONG BUY (Institutional)"
+                elif score >= 7:
+                    s_class = "score-med"; verdict = "BUY / HOLD"
+                else:
+                    s_class = "score-low"; verdict = "WATCH / AVOID"
 
-                c1, c2 = st.columns(2)
+                st.markdown(f'<div class="score-box {s_class}"><h1>{score}/12</h1><h3>{verdict}</h3></div>', unsafe_allow_html=True)
+
+                # Display 3 columns now (4 rows x 3 cols = 12 metrics)
+                c1, c2, c3 = st.columns(3)
                 for i, item in enumerate(trace):
                     css = "card-pass" if item['status'] == "PASS" else "card-fail"
                     icon = "✅" if item['status'] == "PASS" else "❌"
@@ -315,8 +328,9 @@ def main_app():
                         </div>
                     </div>
                     """
-                    if i%2==0: c1.markdown(html, unsafe_allow_html=True)
-                    else: c2.markdown(html, unsafe_allow_html=True)
+                    if i % 3 == 0: c1.markdown(html, unsafe_allow_html=True)
+                    elif i % 3 == 1: c2.markdown(html, unsafe_allow_html=True)
+                    else: c3.markdown(html, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 st.subheader(f"🔮 5-Year AI Price Prediction")
@@ -327,7 +341,7 @@ def main_app():
                         roi_color = "#10b981" if roi > 0 else "#ef4444"
                         st.markdown(f"""
                             <div class="forecast-box">
-                                <h2>Projected Price (2030): {sym}{fut_price:,.2f}</h2>
+                                <h2>Projected Price (2031): {sym}{fut_price:,.2f}</h2>
                                 <h3 style="color:{roi_color}">Expected ROI: {roi:+.2f}%</h3>
                             </div>
                         """, unsafe_allow_html=True)
