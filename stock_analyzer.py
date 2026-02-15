@@ -21,19 +21,30 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
         margin-bottom: 20px;
-        color: white;
+        color: white; /* Text color for the big score box */
     }
     .score-high { background-color: #059669; } /* Green */
     .score-med { background-color: #d97706; }  /* Orange */
     .score-low { background-color: #dc2626; }  /* Red */
     
+    /* FIXED SECTION: FORCE BLACK TEXT ON CARDS */
     .metric-card {
-        background-color: #f8f9fa;
+        background-color: #ffffff; /* White background */
+        color: #000000 !important; /* Force BLACK text */
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 10px;
-        border-left: 5px solid #ccc;
+        border-left: 10px solid #ccc;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
+    .metric-card strong {
+        color: #000000 !important; /* Force bold text black */
+        font-size: 1.1em;
+    }
+    .metric-card small {
+        color: #555555 !important; /* Dark grey for descriptions */
+    }
+    
     .card-pass { border-left-color: #059669; }
     .card-fail { border-left-color: #dc2626; }
     
@@ -170,7 +181,7 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🔐 YnotAI Login")
+        st.title("🔐 Ynot Stock Anlayzer Login")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
@@ -178,7 +189,7 @@ def login_screen():
             
             if submitted:
                 # --- YOUR DEDICATED CREDENTIALS ---
-                if username == "ynot_admin" and password == "ynot_secure_pass":
+                if username == "ynot" and password == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
@@ -187,7 +198,7 @@ def login_screen():
 def footer():
     st.markdown("""
         <div class="footer">
-            <p>Copyright © 2026 ynotAIbundle. All rights reserved.</p>
+            <p>Copyright © 2024 ynotAIbundle. All rights reserved.</p>
         </div>
     """, unsafe_allow_html=True)
 
@@ -254,7 +265,7 @@ def main_app():
                     
                     st.markdown(f"""
                         <div class="metric-card {card_class}">
-                            <div style="display:flex; justify-content:space-between;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <div>
                                     <strong>{icon} {item['step']}</strong><br>
                                     <small>{item['msg']}</small>
