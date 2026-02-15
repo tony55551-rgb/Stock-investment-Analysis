@@ -187,7 +187,7 @@ def login_screen():
 def footer():
     st.markdown("""
         <div class="footer">
-            <p>Copyright © 2024 ynotAIbundle. All rights reserved.</p>
+            <p>Copyright © 2026 ynotAIbundle. All rights reserved.</p>
         </div>
     """, unsafe_allow_html=True)
 
