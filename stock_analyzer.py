@@ -309,7 +309,7 @@ def login_screen():
             pw = st.text_input("Password", type="password")
             if st.form_submit_button("Access Terminal"):
                 # CREDENTIALS
-                if user == "ynot" and pw == "Str0ng@Pulse$884":
+                if user == "ynot" and pw == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else: st.error("Access Denied.")
