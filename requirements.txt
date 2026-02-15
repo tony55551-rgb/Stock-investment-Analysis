@@ -3,3 +3,5 @@ yfinance
 pandas
 requests
 textblob
+prophet
+plotly
