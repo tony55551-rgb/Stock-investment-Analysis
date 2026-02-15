@@ -193,13 +193,13 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🔐 YnotAI Login")
+        st.title("🔐 YnotAI Stock Analyzer")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Enter")
             if submitted:
-                if username == "ynot_admin" and password == "ynot_secure_pass":
+                if username == "ynot" and password == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
