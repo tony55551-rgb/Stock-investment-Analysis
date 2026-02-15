@@ -228,7 +228,7 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🧠 YnotAI Login")
+        st.title("🧠 YnotAI Stock Analyzer Login")
         with st.form("login"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
@@ -239,7 +239,7 @@ def login_screen():
                 else: st.error("Access Denied")
 
 def footer():
-    st.markdown('<div class="footer">© 2024 ynotAIbundle | Pro + AI Edition</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2026 ynotAIbundle | Pro + AI Edition</div>', unsafe_allow_html=True)
 
 def main_app():
     with st.sidebar:
