@@ -190,12 +190,12 @@ def login_screen():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.title("🏛️ Wall St. Login")
+        st.title("🏛️ Ynot AI Stock Analyzer Login")
         with st.form("login"):
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
             if st.form_submit_button("Access Terminal"):
-                if user == "ynot_admin" and pw == "ynot_secure_pass":
+                if user == "ynot" and pw == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else: st.error("Access Denied")
