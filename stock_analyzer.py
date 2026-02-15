@@ -277,7 +277,7 @@ def login_screen():
             user = st.text_input("Username")
             pw = st.text_input("Password", type="password")
             if st.form_submit_button("Access Data"):
-                if user == "ynot_admin" and pw == "ynot_secure_pass":
+                if user == "ynot" and pw == "Str0ng@Pulse#884":
                     st.session_state.authenticated = True
                     st.rerun()
                 else: st.error("Access Denied.")
